@@ -1,103 +1,109 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Ultimate Werewolf</title>
-<style>
-body{
-  background:#111;
-  color:white;
-  font-family:sans-serif;
-  text-align:center;
-}
-button{
-  padding:10px 15px;
-  margin:5px;
-  border:none;
-  border-radius:8px;
-  background:#ff4444;
-  color:white;
-  cursor:pointer;
-}
-button:hover{
-  background:#ff0000;
-}
-.card{
-  margin:20px;
-  padding:20px;
-  background:#222;
-  border-radius:12px;
-  display:inline-block;
-}
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
 
-<h1>🐺 One Night Ultimate Werewolf</h1>
+<h1>🐺 Ultimate Werewolf</h1>
 
-<div class="card">
-<h2>Your Role</h2>
-<h3 id="role">Waiting...</h3>
+<div id="phase"></div>
+<div id="score"></div>
+
+<div id="settings">
+<label><input type="checkbox" value="Seer" checked> Seer</label>
+<label><input type="checkbox" value="Robber" checked> Robber</label>
+<label><input type="checkbox" value="Troublemaker" checked> Troublemaker</label>
+<label><input type="checkbox" value="Doppelganger" checked> Doppelganger</label>
+<label><input type="checkbox" value="Minion" checked> Minion</label>
+<label><input type="checkbox" value="Tanner" checked> Tanner</label>
+<label><input type="checkbox" value="Drunk" checked> Drunk</label>
+<label><input type="checkbox" value="Hunter" checked> Hunter</label>
+<label><input type="checkbox" value="Insomniac" checked> Insomniac</label>
 </div>
 
-<h3 id="phase"></h3>
+<div class="card" id="card">
+<div class="front">
+<img src="images/card-back.png" class="card-back-img">
+</div>
+<div class="back" id="roleText"></div>
+</div>
 
-<button onclick="startGame()">Start Game</button>
+<button id="startBtn" onclick="startGame()">Start Game</button>
 
 <div id="players"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const socket = io();
-const urlParams = new URLSearchParams(window.location.search);
-const room = urlParams.get("room");
-const name = urlParams.get("name");
+const socket=io();
+const url=new URLSearchParams(location.search);
+const room=url.get("room");
+const name=url.get("name");
 
 socket.emit("joinRoom",{room,name});
 
 let myRole="";
 
+socket.on("hostAssigned",hostId=>{
+if(socket.id!==hostId){
+document.getElementById("startBtn").style.display="none";
+}
+});
+
+socket.on("updatePlayers",data=>{
+const players=data.players;
+const host=data.host;
+
+const div=document.getElementById("players");
+div.innerHTML="";
+
+players.forEach(p=>{
+const box=document.createElement("div");
+box.className="player-box";
+
+const nameSpan=document.createElement("span");
+
+if(p.id===host){
+nameSpan.innerText="👑 "+p.name;
+nameSpan.style.color="gold";
+}else{
+nameSpan.innerText=p.name;
+}
+
+box.appendChild(nameSpan);
+
+if(p.id!==socket.id){
+const btn=document.createElement("button");
+btn.innerText="Vote";
+btn.onclick=()=>socket.emit("vote",{room,target:p.id});
+box.appendChild(btn);
+}
+
+div.appendChild(box);
+});
+});
+
 socket.on("yourRole",role=>{
-  myRole=role;
-  document.getElementById("role").innerText=role;
-});
-
-socket.on("nightPhase",()=>{
-  document.getElementById("phase").innerText="🌙 Night Phase";
-});
-
-socket.on("dayPhase",()=>{
-  document.getElementById("phase").innerText="☀️ Day Phase - Vote!";
-});
-
-socket.on("updatePlayers",players=>{
-  const div=document.getElementById("players");
-  div.innerHTML="";
-  players.forEach(player=>{
-    const btn=document.createElement("button");
-    btn.innerText=player.name;
-    btn.onclick=()=>{
-      if(myRole==="Doppelganger"){
-        socket.emit("doppelgangerCopy",{room,targetId:player.id});
-      }else if(myRole==="Drunk"){
-        socket.emit("drunkSwap",{room});
-      }else{
-        socket.emit("vote",{room,targetId:player.id});
-      }
-    };
-    div.appendChild(btn);
-  });
+document.getElementById("roleText").innerHTML=
+"<img src='images/"+role.toLowerCase()+".png' width='120'><br>"+role;
+document.getElementById("card").classList.add("flip");
 });
 
 socket.on("gameResult",data=>{
-  alert(
-    "Eliminated: "+data.eliminated+
-    "\nRole: "+data.role+
-    "\n\n"+data.winner
-  );
+alert(data.winner+"\nEliminated: "+data.eliminated+" ("+data.role+")");
+});
+
+socket.on("scoreboard",data=>{
+document.getElementById("score").innerText=
+"🏡 "+data.villagers+" | 🐺 "+data.wolves+" | 😈 "+data.tanner;
 });
 
 function startGame(){
-  socket.emit("startGame",room);
+const checkboxes=document.querySelectorAll("#settings input:checked");
+const selectedRoles=[];
+checkboxes.forEach(cb=>selectedRoles.push(cb.value));
+socket.emit("startGameWithRoles",{room,selectedRoles});
 }
 </script>
 

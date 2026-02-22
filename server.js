@@ -10,136 +10,198 @@ app.use(express.static("public"));
 
 let rooms = {};
 
-function shuffle(array) {
-  return array.sort(() => Math.random() - 0.5);
+const NIGHT_ORDER = [
+  "Doppelganger",
+  "Werewolf",
+  "Minion",
+  "Seer",
+  "Robber",
+  "Troublemaker",
+  "Drunk",
+  "Insomniac"
+];
+
+function shuffle(array){
+  for(let i=array.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [array[i],array[j]]=[array[j],array[i]];
+  }
+  return array;
 }
 
-io.on("connection", (socket) => {
+io.on("connection", socket=>{
 
-  socket.on("joinRoom", ({ room, name }) => {
-
+  socket.on("joinRoom", ({room,name})=>{
     socket.join(room);
 
-    if (!rooms[room]) {
-      rooms[room] = {
-        players: [],
-        centerCards: [],
-        votes: {},
-        phase: "lobby"
+    if(!rooms[room]){
+      rooms[room]={
+        players:[],
+        center:[],
+        votes:{},
+        host:null,
+        phase:"lobby",
+        scoreboard:{villagers:0,wolves:0,tanner:0}
       };
     }
 
-    rooms[room].players.push({
-      id: socket.id,
-      name,
-      role: null
+    rooms[room].players.push({id:socket.id,name,role:null});
+
+    if(!rooms[room].host){
+      rooms[room].host=socket.id;
+    }
+
+    io.to(room).emit("updatePlayers",{
+      players:rooms[room].players,
+      host:rooms[room].host
     });
 
-    io.to(room).emit("updatePlayers", rooms[room].players);
+    io.to(room).emit("scoreboard",rooms[room].scoreboard);
   });
 
-  socket.on("startGame", (room) => {
+  socket.on("startGameWithRoles",({room,selectedRoles})=>{
+    const r=rooms[room];
+    if(socket.id!==r.host) return;
 
-    let roomData = rooms[room];
+    let roles=["Werewolf","Werewolf",...selectedRoles];
 
-    let roles = [
-      "Werewolf",
-      "Werewolf",
-      "Seer",
-      "Robber",
-      "Troublemaker",
-      "Tanner",
-      "Hunter",
-      "Drunk",
-      "Doppelganger"
-    ];
-
-    while (roles.length < roomData.players.length + 3) {
+    while(roles.length<r.players.length+3){
       roles.push("Villager");
     }
 
-    roles = shuffle(roles);
+    shuffle(roles);
 
-    roomData.players.forEach((player, i) => {
-      player.role = roles[i];
-      io.to(player.id).emit("yourRole", player.role);
+    r.players.forEach((p,i)=>{
+      p.role=roles[i];
+      io.to(p.id).emit("yourRole",p.role);
     });
 
-    roomData.centerCards = roles.slice(roomData.players.length);
-    roomData.phase = "night";
-    roomData.votes = {};
+    r.center=roles.slice(r.players.length);
+    r.votes={};
+    r.phase="night";
+    r.nightStep=0;
 
-    io.to(room).emit("nightPhase");
-
-    setTimeout(() => {
-      roomData.phase = "day";
-      io.to(room).emit("dayPhase");
-    }, 25000);
+    runNight(room);
   });
 
-  socket.on("doppelgangerCopy", ({ room, targetId }) => {
-    let roomData = rooms[room];
-    let me = roomData.players.find(p => p.id === socket.id);
-    let target = roomData.players.find(p => p.id === targetId);
+  function runNight(room){
+    const r=rooms[room];
 
-    if (me && target) {
-      me.role = target.role;
-      io.to(socket.id).emit("yourRole", me.role);
+    if(r.nightStep>=NIGHT_ORDER.length){
+      r.phase="day";
+      io.to(room).emit("dayPhase");
+      return;
+    }
+
+    const role=NIGHT_ORDER[r.nightStep];
+    io.to(room).emit("nightRole",role);
+
+    if(role==="Werewolf"){
+      const wolves=r.players.filter(p=>p.role==="Werewolf");
+      wolves.forEach(w=>{
+        const others=wolves.filter(x=>x.id!==w.id).map(x=>x.name);
+        io.to(w.id).emit("wolvesInfo",others);
+      });
+
+      if(wolves.length===1){
+        const randomIndex=Math.floor(Math.random()*3);
+        io.to(wolves[0].id).emit("loneWolfCenter",r.center[randomIndex]);
+      }
+    }
+
+    if(role==="Minion"){
+      const wolves=r.players
+        .filter(p=>p.role==="Werewolf")
+        .map(p=>p.name);
+
+      r.players.forEach(p=>{
+        if(p.role==="Minion"){
+          io.to(p.id).emit("minionInfo",wolves);
+        }
+      });
+    }
+
+    if(role==="Insomniac"){
+      r.players.forEach(p=>{
+        if(p.role==="Insomniac"){
+          io.to(p.id).emit("reveal",[p.role]);
+        }
+      });
+    }
+
+    setTimeout(()=>{
+      r.nightStep++;
+      runNight(room);
+    },15000);
+  }
+
+  socket.on("vote",({room,target})=>{
+    const r=rooms[room];
+    r.votes[socket.id]=target;
+
+    if(Object.keys(r.votes).length===r.players.length){
+      finishGame(room);
     }
   });
 
-  socket.on("drunkSwap", ({ room }) => {
-    let roomData = rooms[room];
-    let me = roomData.players.find(p => p.id === socket.id);
+  function finishGame(room){
+    const r=rooms[room];
+    let count={};
 
-    let randomIndex = Math.floor(Math.random() * roomData.centerCards.length);
-    let temp = roomData.centerCards[randomIndex];
+    Object.values(r.votes).forEach(id=>{
+      count[id]=(count[id]||0)+1;
+    });
 
-    roomData.centerCards[randomIndex] = me.role;
-    me.role = temp;
-  });
+    const most=Object.keys(count)
+      .reduce((a,b)=>count[a]>count[b]?a:b);
 
-  socket.on("vote", ({ room, targetId }) => {
+    const eliminated=r.players.find(p=>p.id===most);
 
-    let roomData = rooms[room];
-    roomData.votes[socket.id] = targetId;
+    let winner="Werewolves Win 🐺";
 
-    if (Object.keys(roomData.votes).length === roomData.players.length) {
+    if(eliminated.role==="Tanner"){
+      winner="Tanner Wins 😈";
+      r.scoreboard.tanner++;
+    }
+    else if(eliminated.role==="Werewolf"){
+      winner="Villagers Win 🏡";
+      r.scoreboard.villagers++;
+    }
+    else{
+      r.scoreboard.wolves++;
+    }
 
-      let count = {};
-      Object.values(roomData.votes).forEach(id => {
-        count[id] = (count[id] || 0) + 1;
-      });
+    io.to(room).emit("gameResult",{
+      eliminated:eliminated.name,
+      role:eliminated.role,
+      winner
+    });
 
-      let mostVoted = Object.keys(count).reduce((a, b) =>
-        count[a] > count[b] ? a : b
-      );
+    io.to(room).emit("scoreboard",r.scoreboard);
+  }
 
-      let eliminated = roomData.players.find(p => p.id === mostVoted);
+  socket.on("disconnect",()=>{
+    for(const room in rooms){
+      const r=rooms[room];
+      r.players=r.players.filter(p=>p.id!==socket.id);
 
-      let winner = "Werewolves Win 🐺";
-
-      if (eliminated.role === "Tanner") {
-        winner = "Tanner Wins 😈";
+      if(r.host===socket.id){
+        if(r.players.length>0){
+          r.host=r.players[0].id;
+        } else {
+          delete rooms[room];
+          return;
+        }
       }
-      else if (eliminated.role === "Werewolf") {
-        winner = "Villagers Win 🏡";
-      }
 
-      if (eliminated.role === "Hunter") {
-        winner += "\nHunter shoots someone!";
-      }
-
-      io.to(room).emit("gameResult", {
-        eliminated: eliminated.name,
-        role: eliminated.role,
-        winner
+      io.to(room).emit("updatePlayers",{
+        players:r.players,
+        host:r.host
       });
     }
   });
 
 });
 
-server.listen(process.env.PORT || 3000, () =>
-  console.log("🔥 Server running")
-);
+server.listen(process.env.PORT||3000,
+()=>console.log("🔥 Final Server Running"));
