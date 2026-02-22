@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Werewolf Lobby</title>
+</head>
+<body>
+  <h1>Join Room</h1>
+
+  <input id="name" placeholder="Your Name">
+  <input id="room" placeholder="Room Code">
+  <button onclick="join()">Join</button>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    function join() {
+      const name = document.getElementById("name").value;
+      const room = document.getElementById("room").value;
+
+      socket.emit("joinRoom", { room, name });
+      window.location = "/game.html?room=" + room + "&name=" + name;
+    }
+  </script>
+</body>
+</html>

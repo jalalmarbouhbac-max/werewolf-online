@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Ultimate Werewolf</title>
+<style>
+body{
+  background:#111;
+  color:white;
+  font-family:sans-serif;
+  text-align:center;
+}
+button{
+  padding:10px 15px;
+  margin:5px;
+  border:none;
+  border-radius:8px;
+  background:#ff4444;
+  color:white;
+  cursor:pointer;
+}
+button:hover{
+  background:#ff0000;
+}
+.card{
+  margin:20px;
+  padding:20px;
+  background:#222;
+  border-radius:12px;
+  display:inline-block;
+}
+</style>
+</head>
+<body>
+
+<h1>🐺 One Night Ultimate Werewolf</h1>
+
+<div class="card">
+<h2>Your Role</h2>
+<h3 id="role">Waiting...</h3>
+</div>
+
+<h3 id="phase"></h3>
+
+<button onclick="startGame()">Start Game</button>
+
+<div id="players"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const urlParams = new URLSearchParams(window.location.search);
+const room = urlParams.get("room");
+const name = urlParams.get("name");
+
+socket.emit("joinRoom",{room,name});
+
+let myRole="";
+
+socket.on("yourRole",role=>{
+  myRole=role;
+  document.getElementById("role").innerText=role;
+});
+
+socket.on("nightPhase",()=>{
+  document.getElementById("phase").innerText="🌙 Night Phase";
+});
+
+socket.on("dayPhase",()=>{
+  document.getElementById("phase").innerText="☀️ Day Phase - Vote!";
+});
+
+socket.on("updatePlayers",players=>{
+  const div=document.getElementById("players");
+  div.innerHTML="";
+  players.forEach(player=>{
+    const btn=document.createElement("button");
+    btn.innerText=player.name;
+    btn.onclick=()=>{
+      if(myRole==="Doppelganger"){
+        socket.emit("doppelgangerCopy",{room,targetId:player.id});
+      }else if(myRole==="Drunk"){
+        socket.emit("drunkSwap",{room});
+      }else{
+        socket.emit("vote",{room,targetId:player.id});
+      }
+    };
+    div.appendChild(btn);
+  });
+});
+
+socket.on("gameResult",data=>{
+  alert(
+    "Eliminated: "+data.eliminated+
+    "\nRole: "+data.role+
+    "\n\n"+data.winner
+  );
+});
+
+function startGame(){
+  socket.emit("startGame",room);
+}
+</script>
+
+</body>
+</html>
