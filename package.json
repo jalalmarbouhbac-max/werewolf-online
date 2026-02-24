@@ -1,11 +1,12 @@
 {
   "name": "werewolf-online",
-  "version": "5.0.0",
-  "description": "",
+  "version": "1.0.0",
+  "description": "Ultimate Werewolf Online Game",
   "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
+
   "keywords": [],
   "author": "",
   "license": "ISC",
