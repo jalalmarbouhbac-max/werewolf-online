@@ -1,20 +1,63 @@
 <!DOCTYPE html>
 <html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ultimate Werewolf Lobby</title>
+<link rel="stylesheet" href="styles.css">
+</head>
 <body>
-<h2>Join Room</h2>
-<input id="name" placeholder="Your Name">
-<input id="room" placeholder="Room Code">
-<button onclick="join()">Join</button>
 
-<script src="/socket.io/socket.io.js"></script>
+<div class="container">
+
+  <h1>🐺 Ultimate Werewolf</h1>
+
+  <br>
+
+  <input id="name" placeholder="Your Name">
+  <br>
+  <input id="room" placeholder="Room Code">
+  <br><br>
+
+  <button onclick="createGame()">👑 Create Game</button>
+  <button onclick="joinGame()">🎮 Join Game</button>
+
+</div>
+
 <script>
-const socket=io();
-function join(){
-  const name=document.getElementById("name").value;
-  const room=document.getElementById("room").value;
-  socket.emit("joinRoom",{room,name});
-  window.location="game.html?room="+room+"&name="+name;
+
+function createGame(){
+
+  const name = document.getElementById("name").value.trim();
+  const room = document.getElementById("room").value.trim();
+
+  if(!name || !room){
+    alert("Fill all fields");
+    return;
+  }
+
+  window.location =
+    "/game.html?room=" + encodeURIComponent(room) +
+    "&name=" + encodeURIComponent(name) +
+    "&host=true";
 }
+
+function joinGame(){
+
+  const name = document.getElementById("name").value.trim();
+  const room = document.getElementById("room").value.trim();
+
+  if(!name || !room){
+    alert("Fill all fields");
+    return;
+  }
+
+  window.location =
+    "/game.html?room=" + encodeURIComponent(room) +
+    "&name=" + encodeURIComponent(name) +
+    "&host=false";
+}
+
 </script>
+
 </body>
 </html>

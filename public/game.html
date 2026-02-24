@@ -3,6 +3,7 @@
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="styles.css">
+<title>Ultimate Werewolf</title>
 </head>
 <body>
 
@@ -15,97 +16,633 @@
 <label><input type="checkbox" value="Seer" checked> Seer</label>
 <label><input type="checkbox" value="Robber" checked> Robber</label>
 <label><input type="checkbox" value="Troublemaker" checked> Troublemaker</label>
-<label><input type="checkbox" value="Doppelganger" checked> Doppelganger</label>
 <label><input type="checkbox" value="Minion" checked> Minion</label>
 <label><input type="checkbox" value="Tanner" checked> Tanner</label>
 <label><input type="checkbox" value="Drunk" checked> Drunk</label>
-<label><input type="checkbox" value="Hunter" checked> Hunter</label>
 <label><input type="checkbox" value="Insomniac" checked> Insomniac</label>
 </div>
 
 <div class="card" id="card">
-<div class="front">
-<img src="images/card-back.png" class="card-back-img">
-</div>
-<div class="back" id="roleText"></div>
+  <div class="card-inner">
+    <div class="card-face card-front">
+      <img src="images/card-back.png" class="card-back-img">
+    </div>
+    <div class="card-face card-back" id="roleText"></div>
+  </div>
 </div>
 
-<button id="startBtn" onclick="startGame()">Start Game</button>
+<div id="roleActions"></div>
+<div id="centerCards"></div>
+
+<button id="startBtn">Start Game</button>
+<button id="restartBtn" style="display:none;">Restart</button>
+
+
+<!-- BACKGROUND LAYERS -->
+<div id="bg-container">
+  <div class="bg-layer day"></div>
+  <div class="bg-layer night"></div>
+
+</div>
+
+<audio id="nightMusic" src="sounds/night.mp3" loop></audio>
+<audio id="voteMusic" src="sounds/vote.mp3" loop></audio>
 
 <div id="players"></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
-const socket=io();
-const url=new URLSearchParams(location.search);
-const room=url.get("room");
-const name=url.get("name");
 
-socket.emit("joinRoom",{room,name});
+const socket = io();
+const url = new URLSearchParams(location.search);
+const room = url.get("room");
+const name = url.get("name");
+const isHost = url.get("host") === "true";
+
+if(!room || !name) window.location="/";
+
+socket.emit("joinRoom",{room,name,isHost});
 
 let myRole="";
+let currentHost=null;
+let gameStarted=false;
+let hasVoted = false;
+let nightStarted = false;
+let nightMusicStarted = false;
+let nightIntroPlayed = false;
 
-socket.on("hostAssigned",hostId=>{
-if(socket.id!==hostId){
-document.getElementById("startBtn").style.display="none";
-}
-});
+const startBtn=document.getElementById("startBtn");
+const restartBtn=document.getElementById("restartBtn");
+const settingsDiv=document.getElementById("settings");
+const roleActions=document.getElementById("roleActions");
+const nightMusic = document.getElementById("nightMusic");
+const voteMusic = document.getElementById("voteMusic");
 
-socket.on("updatePlayers",data=>{
-const players=data.players;
-const host=data.host;
-
-const div=document.getElementById("players");
-div.innerHTML="";
-
-players.forEach(p=>{
-const box=document.createElement("div");
-box.className="player-box";
-
-const nameSpan=document.createElement("span");
-
-if(p.id===host){
-nameSpan.innerText="👑 "+p.name;
-nameSpan.style.color="gold";
-}else{
-nameSpan.innerText=p.name;
+function stopAllMusic(){
+  nightMusic.pause();
+  voteMusic.pause();
+  nightMusic.currentTime = 0;
+  voteMusic.currentTime = 0;
 }
 
-box.appendChild(nameSpan);
+function playNightMusic(){
 
-if(p.id!==socket.id){
-const btn=document.createElement("button");
-btn.innerText="Vote";
-btn.onclick=()=>socket.emit("vote",{room,target:p.id});
-box.appendChild(btn);
+  const audio = document.getElementById("nightMusic");
+
+  if(!nightMusicStarted){
+    audio.currentTime = 0;
+    audio.play();
+    nightMusicStarted = true;
+  }
+
 }
 
-div.appendChild(box);
-});
+function playVoteMusic(){
+  stopAllMusic();
+  voteMusic.volume = 0.4;
+  voteMusic.play().catch(()=>{});
+}
+
+function narratorSpeak(text){
+
+  speechSynthesis.cancel();
+
+  const msg = new SpeechSynthesisUtterance(text);
+
+  msg.rate = 0.5;      // السرعة
+  msg.pitch = 0.8;      // نغمة غليظة
+  msg.volume = 1;
+
+  // اختيار صوت عميق إلا كان متوفر
+  const voices = speechSynthesis.getVoices();
+  const deepVoice = voices.find(v => 
+    v.name.toLowerCase().includes("male") ||
+    v.name.toLowerCase().includes("english")
+  );
+
+  if(deepVoice){
+    msg.voice = deepVoice;
+  }
+
+  speechSynthesis.speak(msg);
+}
+
+// ================= PLAYERS UPDATE =================
+socket.on("updatePlayers", data=>{
+
+  if(!data) return;
+
+  currentHost = data.host;
+
+  const div = document.getElementById("players");
+  div.innerHTML = "";
+
+  data.players.forEach(p=>{
+
+    const box = document.createElement("div");
+    box.className = "player-box";
+    box.dataset.id = p.id;
+
+    const span = document.createElement("span");
+    span.innerText = (p.id===currentHost?"👑 ":"") + p.name;
+    box.appendChild(span);
+
+    // ✅ Vote غير فـ Day
+if(gameStarted && document.body.classList.contains("day") && p.id !== socket.id){
+
+  const btn = document.createElement("button");
+  btn.innerText = "Vote";
+
+  if(hasVoted){
+    btn.disabled = true;
+    btn.style.backgroundColor = "#999";
+  }
+
+  btn.onclick = ()=>{
+    if(hasVoted) return;
+
+    socket.emit("vote",{room,target:p.id});
+
+    hasVoted = true;
+
+    btn.style.backgroundColor = "red";
+    btn.style.color = "white";
+    btn.innerText = "Voted ✔";
+
+    // نسدو جميع أزرار vote
+    document.querySelectorAll(".player-box button")
+      .forEach(b=>{
+        b.disabled = true;
+        if(b !== btn){
+          b.style.backgroundColor = "#999";
+        }
+      });
+  };
+
+  box.appendChild(btn);
+}
+
+    div.appendChild(box);
+  });
+
+  // ✅ Start غير للـ Host
+  startBtn.style.display =
+    (socket.id===currentHost && !gameStarted)?"inline-block":"none";
+
+  // ✅ Restart غير للـ Host أثناء اللعبة
+  restartBtn.style.display =
+    (socket.id===currentHost && gameStarted)?"inline-block":"none";
 });
 
+
+// ================= ROLE =================
 socket.on("yourRole",role=>{
-document.getElementById("roleText").innerHTML=
-"<img src='images/"+role.toLowerCase()+".png' width='120'><br>"+role;
-document.getElementById("card").classList.add("flip");
+  myRole=role;
+  document.getElementById("roleText").innerHTML=
+    "<img src='images/"+role.toLowerCase()+".png' width='120'><br>"+role;
+  document.getElementById("card").classList.add("flip");
+  speak("Your role is "+role);
+});
+// ===== SHOW REVEAL (WOLF / SEER ETC) =====
+socket.on("reveal", roles => {
+
+  if(!roles || roles.length === 0) return;
+
+  roleActions.innerHTML = "<h3>You saw:</h3>";
+
+  roles.forEach(roleName => {
+
+    roleActions.innerHTML += `
+      <div class="reveal-card">
+        <img src="images/${roleName.toLowerCase()}.png" width="100"
+             onerror="this.style.display='none'"><br>
+        <strong>${roleName}</strong>
+      </div>
+    `;
+  });
+
+  // غير إلى كان الدور ديالي هو الدور الحالي
+  if(document.body.classList.contains("night")){
+
+    setTimeout(()=>{
+      socket.emit("roleDone", room);
+      roleActions.innerHTML="";
+    },7000);
+
+  }
+
 });
 
-socket.on("gameResult",data=>{
-alert(data.winner+"\nEliminated: "+data.eliminated+" ("+data.role+")");
+// ===== WOLVES INFO (2 wolves case) =====
+socket.on("wolvesInfo", others => {
+
+  if(!others || others.length === 0) return;
+
+  roleActions.innerHTML = `
+    <h3>🐺 Other Werewolf:</h3>
+    <div class="reveal-card">
+      <strong>${others.join(", ")}</strong>
+    </div>
+  `;
+
+  // يبقى غير شوية ومن بعد يدوز
+  setTimeout(()=>{
+    roleActions.innerHTML="";
+  },7000);
+
+});
+// ===== MINION INFO =====
+socket.on("minionInfo", wolves => {
+
+  roleActions.innerHTML = `
+    <h3>🐺 Werewolves:</h3>
+    <div class="reveal-card">
+      <strong>${wolves.length > 0 ? wolves.join(", ") : "No Werewolves"}</strong>
+    </div>
+  `;
+
+  // يبقى 5 ثواني ومن بعد يسالي الدور
+  setTimeout(()=>{
+    roleActions.innerHTML="";
+    socket.emit("roleDone", room);
+  },7000);
+
 });
 
-socket.on("scoreboard",data=>{
-document.getElementById("score").innerText=
-"🏡 "+data.villagers+" | 🐺 "+data.wolves+" | 😈 "+data.tanner;
-});
+function showTransition(text, callback){
 
-function startGame(){
-const checkboxes=document.querySelectorAll("#settings input:checked");
-const selectedRoles=[];
-checkboxes.forEach(cb=>selectedRoles.push(cb.value));
-socket.emit("startGameWithRoles",{room,selectedRoles});
+  const overlay = document.getElementById("transitionOverlay");
+  const textDiv = document.getElementById("transitionText");
+
+  textDiv.innerText = text;
+  overlay.classList.add("show");
+
+  setTimeout(()=>{
+    overlay.classList.remove("show");
+    if(callback) callback();
+  },2000);
 }
-</script>
 
+// ================= NIGHT =================
+socket.on("nightRole", role => {
+
+  playNightMusic();
+  gameStarted = true;
+
+  document.body.classList.remove("day");
+  document.body.classList.add("night");
+
+  document.getElementById("phase").innerText = "🌙 Night: " + role;
+
+  // 🔥 غير أول مرة فبداية الليل
+  if(!nightIntroPlayed){
+
+    narratorSpeak("Everyone... close your eyes.");
+
+    nightIntroPlayed = true;
+
+    // نخلي وقت باش يسالي الهضرة
+    setTimeout(() => {
+      narratorSpeak(role + "... wake up.");
+    }, 4000);
+
+  } else {
+
+    narratorSpeak(role + "... wake up.");
+
+  }
+
+  showRoleUI(role);
+});
+
+// ================= DAY =================
+socket.on("dayPhase",()=>{
+
+   const audio = document.getElementById("nightMusic");
+  audio.pause();
+  audio.currentTime = 0;
+  nightMusicStarted = false;
+  nightIntroPlayed = false;
+
+  playVoteMusic();
+  document.body.classList.remove("night");
+  document.body.classList.add("day");
+
+  document.getElementById("phase").innerText="☀ Day - Vote";
+
+  socket.emit("requestPlayersUpdate", room);
+});
+
+// ================= ROLE UI =================
+function showRoleUI(role){
+
+  roleActions.innerHTML="";
+
+  if(role!==myRole) return;
+
+  // ===== SEER =====
+if(role==="Seer"){
+
+  roleActions.innerHTML = `
+    <h3>Choose:</h3>
+    <button id="seePlayerBtn">See 1 Player</button>
+    <button id="seeCenterBtn">See 2 Center Cards</button>
+  `;
+
+  // 👁‍🗨 تشوف لاعب
+  document.getElementById("seePlayerBtn").onclick = ()=>{
+
+    roleActions.innerHTML = "<h3>Select a player</h3>";
+
+    document.querySelectorAll(".player-box").forEach(box=>{
+      if(box.dataset.id !== socket.id){
+
+        const btn=document.createElement("button");
+        btn.innerText=box.innerText;
+
+        btn.onclick=()=>{
+          socket.emit("seerAction",{room,targetId:box.dataset.id});
+  
+        };
+
+        roleActions.appendChild(btn);
+      }
+    });
+  };
+
+  // 👁‍🗨 تشوف جوج من الوسط
+  document.getElementById("seeCenterBtn").onclick = ()=>{
+
+    roleActions.innerHTML = "<h3>Select 2 center cards</h3>";
+
+    let selected = [];
+
+    for(let i=0;i<3;i++){
+
+      const btn=document.createElement("button");
+      btn.innerText="Center "+(i+1);
+
+      btn.onclick=()=>{
+        selected.push(i);
+        btn.disabled=true;
+
+        if(selected.length===2){
+
+          socket.emit("seerAction",{
+            room,
+            centerIndexes:selected
+          });
+
+ 
+        }
+      };
+
+      roleActions.appendChild(btn);
+    }
+  };
+}
+
+  // ===== ROBBER =====
+  if(role==="Robber"){
+    roleActions.innerHTML="<h3>Swap with player</h3>";
+    document.querySelectorAll(".player-box").forEach(box=>{
+      if(box.dataset.id!==socket.id){
+        const btn=document.createElement("button");
+        btn.innerText=box.innerText;
+        btn.onclick=()=>{
+          socket.emit("robberAction",{room,targetId:box.dataset.id});
+        // نسدو الأزرار باش ما يعاودش يضغط
+        document.querySelectorAll("#roleActions button")
+          .forEach(b=>b.disabled=true);
+        };
+        roleActions.appendChild(btn);
+      }
+    });
+  }
+
+  // ===== TROUBLEMAKER =====
+  if(role==="Troublemaker"){
+    let selected=[];
+    roleActions.innerHTML="<h3>Select 2 players</h3>";
+
+    document.querySelectorAll(".player-box").forEach(box=>{
+      if(box.dataset.id!==socket.id){
+        const btn=document.createElement("button");
+        btn.innerText=box.innerText;
+        btn.onclick=()=>{
+          selected.push(box.dataset.id);
+          btn.disabled=true;
+          if(selected.length===2){
+            socket.emit("troubleAction",{room,id1:selected[0],id2:selected[1]});
+            socket.emit("roleDone",room);
+            roleActions.innerHTML="";
+          }
+        };
+        roleActions.appendChild(btn);
+      }
+    });
+  }
+
+  // ===== DRUNK =====
+  if(role==="Drunk"){
+    roleActions.innerHTML="<h3>Choose center card</h3>";
+    for(let i=0;i<3;i++){
+      const btn=document.createElement("button");
+      btn.innerText="Card "+(i+1);
+      btn.onclick=()=>{
+        socket.emit("drunkAction",{room,index:i});
+        socket.emit("roleDone",room);
+        roleActions.innerHTML="";
+      };
+      roleActions.appendChild(btn);
+    }
+  }
+
+  // ===== LONE WOLF FIX =====
+
+}
+// ===== LONE WOLF TURN =====
+socket.on("loneWolfTurn", () => {
+
+  roleActions.innerHTML = "<h3>You are alone. Pick a center card</h3>";
+
+  for(let i=0;i<3;i++){
+
+    const btn = document.createElement("button");
+    btn.innerText = "Center " + (i+1);
+
+    btn.onclick = () => {
+
+      socket.emit("loneWolfPickCenter",{room,index:i});
+     
+
+    };
+
+    roleActions.appendChild(btn);
+  }
+});
+
+// ================= RESULT =================
+
+
+// ================= SCORE =================
+socket.on("scoreboard",data=>{
+  document.getElementById("score").innerText=
+    "🏡 "+data.villagers+" | 🐺 "+data.wolves+" | 😈 "+data.tanner;
+});
+
+
+// ================= RESTART =================
+restartBtn.onclick = () => socket.emit("restartGame", room);
+
+socket.on("resetGame", () => {
+
+  nightIntroPlayed = false;
+  gameStarted = false;
+
+  restartBtn.style.display = "none";
+  settingsDiv.style.display = "block";
+  roleActions.innerHTML = "";
+  hasVoted = false;
+
+  document.getElementById("card").classList.remove("flip");
+  document.body.classList.remove("night");
+  ocument.body.classList.remove("day");
+  document.getElementById("phase").innerText = "";
+
+  // 🔥 رجع Start للـ Host
+  if(socket.id === currentHost){
+    startBtn.style.display = "inline-block";
+  } else {
+    startBtn.style.display = "none";
+  }
+});
+
+socket.on("voteUpdate", count=>{
+
+  document.querySelectorAll(".player-box").forEach(box=>{
+
+    const id = box.dataset.id;
+
+    const voteBadge = box.querySelector(".vote-count");
+
+    if(voteBadge) voteBadge.remove();
+
+    if(count[id]){
+
+      const span = document.createElement("span");
+      span.className="vote-count";
+      span.innerText=" 🗳 "+count[id];
+
+      box.appendChild(span);
+    }
+  });
+
+});
+
+socket.on("finalReveal", data => {
+
+  stopAllMusic();
+
+  console.log("FINAL REVEAL RECEIVED", data);
+
+  gameStarted = false;
+
+  document.body.classList.remove("night");
+  document.body.classList.remove("day");
+
+  const container = document.getElementById("roleActions");
+  container.innerHTML = "";
+
+  container.innerHTML += "<h2>🏁 Game Over</h2>";
+  container.innerHTML += "<h3>"+data.winner+"</h3>";
+  container.innerHTML += "<p>Eliminated: "+data.eliminated+
+                         " ("+data.role+")</p>";
+
+  container.innerHTML += "<h3>👥 Final Player Roles</h3>";
+
+  data.players.forEach(p=>{
+
+    const roleName = p.role ? p.role : "Unknown";
+    const roleImage = roleName.toLowerCase();
+
+    container.innerHTML += `
+      <div class="reveal-card">
+        <img src="images/${roleImage}.png" width="80"
+             onerror="this.style.display='none'"><br>
+        ${p.name}<br>
+        <strong>${roleName}</strong>
+      </div>
+    `;
+  });
+
+  container.innerHTML += "<h3>🂠 Center Cards</h3>";
+
+  data.center.forEach(role=>{
+
+    const roleName = role ? role : "Unknown";
+    const roleImage = roleName.toLowerCase();
+
+    container.innerHTML += `
+      <div class="reveal-card">
+        <img src="images/${roleImage}.png" width="80"
+             onerror="this.style.display='none'"><br>
+        ${roleName}
+      </div>
+    `;
+  });
+
+  restartBtn.style.display="inline-block";
+});
+
+// ================= START =================
+startBtn.addEventListener("click",()=>{
+  if(socket.id!==currentHost || gameStarted) return;
+   nightMusic.play().then(()=>nightMusic.pause());
+   speechSynthesis.cancel();
+  
+
+  const selected=[];
+  document.querySelectorAll("#settings input:checked")
+    .forEach(cb=>selected.push(cb.value));
+
+  socket.emit("startGameWithRoles",{room,selectedRoles:selected});
+});
+// ================= CINEMATIC EFFECTS =================
+
+function showCinematicNight(){
+
+  const c = document.getElementById("cinematic");
+  const t = c.querySelector(".cinematic-text");
+
+  t.innerText = "The Night Begins";
+
+  c.classList.add("show");
+
+  setTimeout(()=>{
+    c.classList.remove("show");
+  },2500);
+}
+
+function showCinematicSunrise(){
+
+  const c = document.getElementById("cinematic");
+  const t = c.querySelector(".cinematic-text");
+
+  t.innerText = "The Sun Rises";
+
+  c.style.background =
+    "radial-gradient(circle at center,#ffcc66 0%,#f6b73c 60%,#d98c1f 100%)";
+
+  c.classList.add("show");
+
+  setTimeout(()=>{
+    c.classList.remove("show");
+    c.style.background =
+      "radial-gradient(circle at center,#000 0%,#000 60%,#111 100%)";
+  },2500);
+}
+
+</script>
 </body>
 </html>
